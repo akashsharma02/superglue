@@ -1,0 +1,47 @@
+{
+    "name": "Mnist_LeNet",
+    "n_gpu": 1,
+    "arch": {
+        "type": "SuperGlueModel",
+        "args": {
+            "weight_type": "outdoor",
+            "sinkorn_iterations": 20,
+            "keypoint_encoder": [
+                64,
+                128,
+                256
+            ],
+            "num_GNN_layers": 9
+        }
+    },
+    "data_loader": {
+        "type": "AidtrDataLoader",
+        "args": {
+            "data_dir": "/projects/katefgroup/datasets/aidtr/processed/superglue_ad/",
+            "batch_size": 1,
+            "num_features": -1,
+            "shuffle": false,
+            "validation_split": 0.1,
+            "num_workers": 2,
+            "resize": [240, 320]
+        }
+    },
+    "optimizer": {
+        "type": "Adam",
+        "args": {
+            "lr": 0.0001,
+            "weight_decay": 0,
+            "amsgrad": true
+        }
+    },
+    "loss": "nll_loss",
+    "trainer": {
+        "epochs": 5,
+        "save_dir": "saved/",
+        "save_period": 1,
+        "verbosity": 2,
+        "monitor": "min val_loss",
+        "early_stop": 10,
+        "tensorboard": true
+    }
+}
