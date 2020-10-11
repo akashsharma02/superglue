@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torchvision.utils import make_grid
 from base import BaseTrainer
-from utils import inf_loop, MetricTracker, read_image_modified, make_matching_plot
+from utils import inf_loop, MetricTracker, make_matching_plot
 import matplotlib.cm as cm
 
 
@@ -57,16 +57,17 @@ class Trainer(BaseTrainer):
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
             self.train_metrics.update('loss', loss.item())
             for met in self.metric_ftns:
-                self.train_metrics.update(met.__name__, met(output, target))
+                self.train_metrics.update(met.__name__, met(output, data['target_matches']))
 
             if batch_idx % self.log_step == 0:
                 self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
                     epoch,
                     self._progress(batch_idx),
                     loss.item()))
-                image0, image1 = data['image0'].cpu().numpy()[0], data['image1'].cpu().numpy()[0]
-                kpts0, kpts1 = data['keypoints0'].cpu().numpy()[0], data['keypoints1'].cpu().numpy()[0]
-                matches, conf = data['matches0'].cpu().detach().numpy(), data['matching_scores0'].cpu().detach().numpy()
+
+                image0, image1 = data['image0'].cpu().numpy().squeeze(), data['image1'].cpu().numpy().squeeze()
+                kpts0, kpts1 = data['keypoints0'].cpu().numpy().squeeze(), data['keypoints1'].cpu().numpy().squeeze()
+                matches, conf = output['matches0'].cpu().detach().numpy(), output['matching_scores0'].cpu().detach().numpy()
 
                 valid = matches > -1
                 mkpts0, mkpts1 = kpts0[valid], kpts1[matches[valid]]
@@ -78,7 +79,7 @@ class Trainer(BaseTrainer):
                 plot = make_matching_plot(
                     image0, image1, kpts0, kpts1, mkpts0, mkpts1, color,
                     text, show_keypoints=True)
-                self.writer.add_image(f'{batch_idx}_matches', plot)
+                self.writer.add_image(f'{batch_idx}_matches', np.transpose(plot, (2, 0, 1)))
 
             if batch_idx == self.len_epoch:
                 break
@@ -117,9 +118,9 @@ class Trainer(BaseTrainer):
                 self.valid_metrics.update('loss', loss.item())
                 for met in self.metric_ftns:
                     self.valid_metrics.update(met.__name__, met(output, target))
-                image0, image1 = data['image0'].cpu().numpy()[0], data['image1'].cpu().numpy()[0]
-                kpts0, kpts1 = data['keypoints0'].cpu().numpy()[0], data['keypoints1'].cpu().numpy()[0]
-                matches, conf = data['matches0'].cpu().detach().numpy(), data['matching_scores0'].cpu().detach().numpy()
+                image0, image1 = data['image0'].cpu().numpy().squeeze(), data['image1'].cpu().numpy().squeeze()
+                kpts0, kpts1 = data['keypoints0'].cpu().numpy().squeeze(), data['keypoints1'].cpu().numpy().squeeze()
+                matches, conf = output['matches0'].cpu().detach().numpy(), output['matching_scores0'].cpu().detach().numpy()
 
                 valid = matches > -1
                 mkpts0, mkpts1 = kpts0[valid], kpts1[matches[valid]]
@@ -131,7 +132,7 @@ class Trainer(BaseTrainer):
                 plot = make_matching_plot(
                     image0, image1, kpts0, kpts1, mkpts0, mkpts1, color,
                     text, show_keypoints=True)
-                self.writer.add_image(f'{batch_idx}_matches', plot)
+                self.writer.add_image(f'{batch_idx}_matches', np.transpose(plot, (2, 0, 1)))
 
         # add histogram of model parameters to the tensorboard
         for name, p in self.model.named_parameters():

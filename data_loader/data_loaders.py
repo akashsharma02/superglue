@@ -2,6 +2,8 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset
 from base import BaseDataLoader
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 from pathlib import Path
 import cv2
@@ -19,17 +21,22 @@ class AidtrDataLoader(BaseDataLoader):
         self.num_features = num_features
         self.resize = resize
         self.transform = transforms.Compose([
-            transforms.ToTensor()
+            transforms.ToPILImage(),
         ])
         if self.resize is not None:
-            self.transform.Compose([
-                self.transform.Resize(self.resize)
+            self.transform = transforms.Compose([
+                self.transform,
+                transforms.Resize(self.resize)
             ])
+        self.transform = transforms.Compose([
+            self.transform,
+            transforms.ToTensor()
+        ])
 
         self.dataset = AidtrDataset(
             self.data_dir, self.num_features, train=training, transform=self.transform)
-        super.__init__(self.dataset, batch_size, shuffle,
-                       validation_split, num_workers)
+        super().__init__(self.dataset, batch_size, shuffle,
+                         validation_split, num_workers)
 
 
 class AidtrDataset(Dataset):
@@ -39,17 +46,17 @@ class AidtrDataset(Dataset):
 
     """
 
-    def __init__(self, data_dir, train, num_features, transform):
+    def __init__(self, data_dir, num_features, train, transform):
 
-        self.files = []
-        self.folder = folder + '_data_rs/'
         self.num_features = num_features
         self.transform = transform
         if train:
             self.data_dir = Path(data_dir) / Path('train_data')
         else:
             self.data_dir = Path(data_dir) / Path('test_data')
-        self.data += [data_file for data_file in self.data_file.iterdir()]
+
+        self.data = []
+        self.data += [data_file for data_file in self.data_dir.iterdir()]
 
         self.matcher = cv2.BFMatcher_create(cv2.NORM_L1, crossCheck=False)
 
@@ -58,15 +65,15 @@ class AidtrDataset(Dataset):
 
     def __getitem__(self, idx):
 
+        filename = self.data[idx]
         data = np.load(self.data[idx], allow_pickle=True)
-        filename = self.files[idx]
 
         kp0 = data[0].squeeze()
         kp1 = data[1].squeeze()
         desc0 = data[2].squeeze()
         desc1 = data[3].squeeze()
-        image0 = data[4].astype(np.float64)
-        image1 = data[5].astype(np.float64)
+        image0 = data[4]
+        image1 = data[5]
         homography = data[6]
 
         width, height = image0.shape[0], image0.shape[1]
@@ -74,7 +81,7 @@ class AidtrDataset(Dataset):
         assert image0.shape == image1.shape, "Incompatible image sized in Dataset"
         assert kp0.shape[1] == kp1.shape[1], "Incompatible keypoint shapes"
         assert kp0.shape[0] == desc0.shape[0]
-        assert kp1.shape[0] == desc0.shape[0]
+        assert kp1.shape[0] == desc1.shape[0]
 
         if self.num_features > 0:
             kp0_num = min(self.num_features, len(kp0))
@@ -85,18 +92,18 @@ class AidtrDataset(Dataset):
         # Coordinates may have 3 dimensions (x, y, score)
         kp0_np = np.array([(kp[0], kp[1]) for kp in kp0])
         kp1_np = np.array([(kp[0], kp[1]) for kp in kp1])
-        scores0_np = np.array([kp[2] for kp in kp0]).astype(np.float64)
-        scores1_np = np.array([kp[2] for kp in kp1]).astype(np.float64)
+        scores0_np = np.array([kp[2] for kp in kp0]).astype(np.float32)
+        scores1_np = np.array([kp[2] for kp in kp1]).astype(np.float32)
 
         if len(kp0) < 1 or len(kp1) < 1:
             return{
-                'keypoints0': torch.zeros([0, 0, 2], dtype=torch.double),
-                'keypoints1': torch.zeros([0, 0, 2], dtype=torch.double),
-                'descriptors0': torch.zeros([0, 2], dtype=torch.double),
-                'descriptors1': torch.zeros([0, 2], dtype=torch.double),
+                'keypoints0': torch.zeros([0, 0, 2], dtype=torch.float32),
+                'keypoints1': torch.zeros([0, 0, 2], dtype=torch.float32),
+                'descriptors0': torch.zeros([0, 2], dtype=torch.float32),
+                'descriptors1': torch.zeros([0, 2], dtype=torch.float32),
                 'image0': image0,
                 'image1': image1,
-                'filename': filename
+                'filename': str(filename)
             }
         matched = self.matcher.match(desc0, desc1)
 
@@ -125,23 +132,23 @@ class AidtrDataset(Dataset):
                 print(
                     "Match {matches[idx]} {min2[matches[idx]]} dist={dists[matches[idx], min2[matches[idx]]]}")
                 matches_dmatch.append(dmatch)
-            out = cv2.drawMatches(image0, kp1, image1,
-                                  kp2, matches_dmatch, None)
+            out = cv2.drawMatches(image0, kp0, image1,
+                                  kp1, matches_dmatch, None)
             cv2.imshow('a', out)
             cv2.waitKey(0)
 
         MN = np.concatenate(
             [min1[matches][np.newaxis, :], matches[np.newaxis, :]])
         MN2 = np.concatenate([missing1[np.newaxis, :], (len(
-            kp2)) * np.ones((1, len(missing1)), dtype=np.int64)])
+            kp1)) * np.ones((1, len(missing1)), dtype=np.int64)])
         MN3 = np.concatenate(
-            [(len(kp1)) * np.ones((1, len(missing2)), dtype=np.int64), missing2[np.newaxis, :]])
+            [(len(kp0)) * np.ones((1, len(missing2)), dtype=np.int64), missing2[np.newaxis, :]])
         target_matches = np.concatenate([MN, MN2, MN3], axis=1)
 
-        kp0_np = kp0_np.reshape((1, -1, 2))
-        kp1_np = kp1_np.reshape((1, -1, 2))
-        desc0 = np.transpose(desc0)
-        desc1 = np.transpose(desc1)
+        kp0_np = kp0_np.reshape((1, -1, 2)).astype(np.float32)
+        kp1_np = kp1_np.reshape((1, -1, 2)).astype(np.float32)
+        desc0 = np.transpose(desc0).astype(np.float32)
+        desc1 = np.transpose(desc1).astype(np.float32)
 
         if self.transform is not None:
             image0 = self.transform(image0)
@@ -157,5 +164,5 @@ class AidtrDataset(Dataset):
             'image0': image0,
             'image1': image1,
             'target_matches': list(target_matches),
-            'filename': filename
+            'filename': str(filename)
         }

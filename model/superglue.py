@@ -207,21 +207,20 @@ class SuperGlueModel(nn.Module):
 
     def __init__(self, **kwargs):
         super().__init__()
-        self.config = {**self.default_config, **config}
 
-        descriptor_dim = kwargs.get('descriptor_dim', 128)
-        match_threshold = kwargs.get('match_threshold', 0.2)
-        sinkhorn_iterations = kwargs.get('sinkhorn_iterations', 100)
-        weight_type = kwargs.get('weight_type', None)
+        self.descriptor_dim = kwargs.get('descriptor_dim', 128)
+        self.match_threshold = kwargs.get('match_threshold', 0.2)
+        self.sinkhorn_iterations = kwargs.get('sinkhorn_iterations', 100)
+        self.weight_type = kwargs.get('weight_type', None)
 
         self.kenc = KeypointEncoder(
-            descriptor_dim, kwargs.get('keypoint_encoder')
+            self.descriptor_dim, kwargs.get('keypoint_encoder'))
 
         self.gnn = AttentionalGNN(
-            descriptor_dim, kwargs.get('GNN_layers', ['self', 'cross']) * kwargs.get('num_GNN_layers'))
+            self.descriptor_dim, kwargs.get('GNN_layers', ['self', 'cross']) * kwargs.get('num_GNN_layers'))
 
         self.final_proj = nn.Conv1d(
-            descriptor_dim, descriptor_dim,
+            self.descriptor_dim, self.descriptor_dim,
             kernel_size=1, bias=True)
 
         bin_score = torch.nn.Parameter(torch.tensor(1.))
@@ -240,9 +239,9 @@ class SuperGlueModel(nn.Module):
 
     def forward(self, data):
         """Run SuperGlue on a pair of keypoints and descriptors"""
-        desc0, desc1 = data['descriptors0'].double(), data['descriptors1'].double()
-        kpts0, kpts1 = data['keypoints0'].double(), data['keypoints1'].double()
-        scores0, scores1 = data['scores0'].double(), data['scores1'].double()
+        desc0, desc1 = data['descriptors0'], data['descriptors1']
+        kpts0, kpts1 = data['keypoints0'], data['keypoints1']
+        scores0, scores1 = data['scores0'], data['scores1']
 
         desc0 = desc0.transpose(0,1)
         desc1 = desc1.transpose(0,1)
@@ -259,8 +258,8 @@ class SuperGlueModel(nn.Module):
                 'skip_train': True
             }
 
-        file_name = data['file_name']
-        all_matches = data['all_matches'].permute(1,2,0) # shape=torch.Size([1, 87, 2])
+        filename = data['filename']
+        target_matches = data['target_matches'].permute(1,2,0) # shape=torch.Size([1, 87, 2])
 
         # Keypoint normalization.
         kpts0 = normalize_keypoints(kpts0, data['image0'].shape)
@@ -278,12 +277,12 @@ class SuperGlueModel(nn.Module):
 
         # Compute matching descriptor distance.
         scores = torch.einsum('bdn,bdm->bnm', mdesc0, mdesc1)
-        scores = scores / self.config['descriptor_dim']**.5
+        scores = scores / self.descriptor_dim**.5
 
         # Run the optimal transport.
         scores = log_optimal_transport(
             scores, self.bin_score,
-            iters=sinkhorn_iterations)
+            iters=self.sinkhorn_iterations)
 
         # Get the matches with score above "match_threshold".
         max0, max1 = scores[:, :-1, :-1].max(2), scores[:, :-1, :-1].max(1)
@@ -293,16 +292,16 @@ class SuperGlueModel(nn.Module):
         zero = scores.new_tensor(0)
         mscores0 = torch.where(mutual0, max0.values.exp(), zero)
         mscores1 = torch.where(mutual1, mscores0.gather(1, indices1), zero)
-        valid0 = mutual0 & (mscores0 > match_threshold)
+        valid0 = mutual0 & (mscores0 > self.match_threshold)
         valid1 = mutual1 & valid0.gather(1, indices1)
         indices0 = torch.where(valid0, indices0, indices0.new_tensor(-1))
         indices1 = torch.where(valid1, indices1, indices1.new_tensor(-1))
 
         # check if indexed correctly
         # loss = []
-        # for i in range(len(all_matches[0])):
-        #     x = all_matches[0][i][0]
-        #     y = all_matches[0][i][1]
+        # for i in range(len(target_matches[0])):
+        #     x = target_matches[0][i][0]
+        #     y = target_matches[0][i][1]
         #     loss.append(-torch.log( scores[0][x][y].exp() )) # check batch size == 1 ?
         # loss_mean = torch.mean(torch.stack(loss))
         # loss_mean = torch.reshape(loss_mean, (1, -1))

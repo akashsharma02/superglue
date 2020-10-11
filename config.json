@@ -1,11 +1,12 @@
 {
-    "name": "Mnist_LeNet",
+    "name": "SuperGlue",
     "n_gpu": 1,
     "arch": {
         "type": "SuperGlueModel",
         "args": {
             "weight_type": "outdoor",
             "sinkorn_iterations": 20,
+            "descriptor_dim": 256,
             "keypoint_encoder": [
                 64,
                 128,
@@ -17,15 +18,17 @@
     "data_loader": {
         "type": "AidtrDataLoader",
         "args": {
-            "data_dir": "/projects/katefgroup/datasets/aidtr/processed/superglue_ad/",
+            "data_dir": "/projects/katefgroup/datasets/aidtr/processed/superglue_ae/",
             "batch_size": 1,
             "num_features": -1,
             "shuffle": false,
             "validation_split": 0.1,
-            "num_workers": 2,
+            "num_workers": 1,
             "resize": [240, 320]
         }
     },
+    "metrics": [
+    ],
     "optimizer": {
         "type": "Adam",
         "args": {
